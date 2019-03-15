@@ -18,12 +18,7 @@
 #define LOG(x) std::cerr
 
 NSString* loadModel(NSObject<FlutterPluginRegistrar>* _registrar, NSDictionary* args);
-NSMutableArray* runModelOnImage(NSDictionary* args);
-NSMutableArray* runModelOnBinary(NSDictionary* args);
-NSMutableArray* runModelOnFrame(NSDictionary* args);
 NSMutableArray* detectObjectOnImage(NSDictionary* args);
-NSMutableArray* detectObjectOnBinary(NSDictionary* args);
-NSMutableArray* detectObjectOnFrame(NSDictionary* args);
 void close();
 
 @implementation TflitePlugin {
@@ -50,27 +45,12 @@ void close();
   if ([@"loadModel" isEqualToString:call.method]) {
     NSString* load_result = loadModel(_registrar, call.arguments);
     result(load_result);
-  } else if ([@"runModelOnImage" isEqualToString:call.method]) {
-    NSMutableArray* inference_result = runModelOnImage(call.arguments);
-    result(inference_result);
-  } else if ([@"runModelOnBinary" isEqualToString:call.method]) {
-    NSMutableArray* inference_result = runModelOnBinary(call.arguments);
-    result(inference_result);
-  } else if ([@"runModelOnFrame" isEqualToString:call.method]) {
-    NSMutableArray* inference_result = runModelOnFrame(call.arguments);
-    result(inference_result);
-  } else if ([@"detectObjectOnImage" isEqualToString:call.method]) {
+  } 
+  else if ([@"detectObjectOnImage" isEqualToString:call.method]) {
     NSMutableArray* inference_result = detectObjectOnImage(call.arguments);
     result(inference_result);
-  } else if ([@"detectObjectOnBinary" isEqualToString:call.method]) {
-    NSMutableArray* inference_result = detectObjectOnBinary(call.arguments);
-    result(inference_result);
-  } else if ([@"detectObjectOnFrame" isEqualToString:call.method]) {
-    NSMutableArray* inference_result = detectObjectOnFrame(call.arguments);
-    result(inference_result);
-  } else if ([@"close" isEqualToString:call.method]) {
-    close();
-  } else {
+  }
+  else {
     result(FlutterMethodNotImplemented);
   }
 }
@@ -250,99 +230,6 @@ NSMutableArray* GetTopN(const float* prediction, const unsigned long prediction_
   return predictions;
 }
 
-NSMutableArray* runModelOnImage(NSDictionary* args) {
-  const NSString* image_path = args[@"path"];
-  const float input_mean = [args[@"imageMean"] floatValue];
-  const float input_std = [args[@"imageStd"] floatValue];
-  
-  NSMutableArray* empty = [@[] mutableCopy];
-  
-  if (!interpreter) {
-    NSLog(@"Failed to construct interpreter.");
-    return empty;
-  }
-  
-  int input_size;
-  feedInputTensorImage(image_path, input_mean, input_std, &input_size);
-  
-  if (interpreter->Invoke() != kTfLiteOk) {
-    NSLog(@"Failed to invoke!");
-    return empty;
-  }
-  
-  float* output = interpreter->typed_output_tensor<float>(0);
-  
-  if (output == NULL)
-    return empty;
-  
-  const unsigned long output_size = labels.size();
-  const int num_results = [args[@"numResults"] intValue];
-  const float threshold = [args[@"threshold"] floatValue];
-  return GetTopN(output, output_size, num_results, threshold);
-}
-
-NSMutableArray* runModelOnBinary(NSDictionary* args) {
-  const FlutterStandardTypedData* typedData = args[@"binary"];
-  NSMutableArray* empty = [@[] mutableCopy];
-  
-  if (!interpreter) {
-    NSLog(@"Failed to construct interpreter.");
-    return empty;
-  }
-
-  int input_size;
-  feedInputTensorBinary(typedData, &input_size);
-  
-  if (interpreter->Invoke() != kTfLiteOk) {
-    NSLog(@"Failed to invoke!");
-    return empty;
-  }
-  
-  float* output = interpreter->typed_output_tensor<float>(0);
-  
-  if (output == NULL)
-    return empty;
-  
-  const unsigned long output_size = labels.size();
-  const int num_results = [args[@"numResults"] intValue];
-  const float threshold = [args[@"threshold"] floatValue];
-  return GetTopN(output, output_size, num_results, threshold);
-}
-
-
-NSMutableArray* runModelOnFrame(NSDictionary* args) {
-  const FlutterStandardTypedData* typedData = args[@"bytesList"][0];
-  const int image_height = [args[@"imageHeight"] intValue];
-  const int image_width = [args[@"imageWidth"] intValue];
-  const float input_mean = [args[@"imageMean"] floatValue];
-  const float input_std = [args[@"imageStd"] floatValue];
-  NSMutableArray* empty = [@[] mutableCopy];
-  
-  if (!interpreter) {
-    NSLog(@"Failed to construct interpreter.");
-    return empty;
-  }
-  
-  int input_size;
-  int image_channels = 4;
-  feedInputTensorFrame(typedData, &input_size, image_height, image_width, image_channels, input_mean, input_std);
-  
-  if (interpreter->Invoke() != kTfLiteOk) {
-    NSLog(@"Failed to invoke!");
-    return empty;
-  }
-  
-  float* output = interpreter->typed_output_tensor<float>(0);
-  
-  if (output == NULL)
-    return empty;
-  
-  const unsigned long output_size = labels.size();
-  const int num_results = [args[@"numResults"] intValue];
-  const float threshold = [args[@"threshold"] floatValue];
-  return GetTopN(output, output_size, num_results, threshold);
-}
-
 NSMutableArray* parseSSDMobileNet(float threshold, int num_results_per_class) {
   assert(interpreter->outputs().size() == 4);
   
@@ -393,111 +280,6 @@ NSMutableArray* parseSSDMobileNet(float threshold, int num_results_per_class) {
   return results;
 }
 
-float sigmoid(float x) {
-  return 1.0 / (1.0 + exp(-x));
-}
-
-void softmax(float vals[], int count) {
-  float max = -FLT_MAX;
-  for (int i=0; i<count; i++) {
-    max = fmax(max, vals[i]);
-  }
-  float sum = 0.0;
-  for (int i=0; i<count; i++) {
-    vals[i] = exp(vals[i] - max);
-    sum += vals[i];
-  }
-  for (int i=0; i<count; i++) {
-    vals[i] /= sum;
-  }
-}
-
-NSMutableArray* parseYOLO(int num_classes, const NSArray* anchors, int block_size, int num_boxes_per_bolock,
-                          int num_results_per_class, float threshold, int input_size) {
-  float* output = interpreter->typed_output_tensor<float>(0);
-  NSMutableArray* results = [NSMutableArray array];
-  std::priority_queue<std::pair<float, NSMutableDictionary*>, std::vector<std::pair<float, NSMutableDictionary*>>,
-  std::less<std::pair<float, NSMutableDictionary*>>> top_result_pq;
-  
-  int grid_size = input_size / block_size;
-  for (int y = 0; y < grid_size; ++y) {
-    for (int x = 0; x < grid_size; ++x) {
-      for (int b = 0; b < num_boxes_per_bolock; ++b) {
-        int offset = (grid_size * (num_boxes_per_bolock * (num_classes + 5))) * y
-        + (num_boxes_per_bolock * (num_classes + 5)) * x
-        + (num_classes + 5) * b;
-        
-        float confidence = sigmoid(output[offset + 4]);
-        
-        float classes[num_classes];
-        for (int c = 0; c < num_classes; ++c) {
-          classes[c] = output[offset + 5 + c];
-        }
-        
-        softmax(classes, num_classes);
-        
-        int detected_class = -1;
-        float max_class = 0;
-        for (int c = 0; c < num_classes; ++c) {
-          if (classes[c] > max_class) {
-            detected_class = c;
-            max_class = classes[c];
-          }
-        }
-        
-        float confidence_in_class = max_class * confidence;
-        if (confidence_in_class > threshold) {
-          NSMutableDictionary* rect = [NSMutableDictionary dictionary];
-          NSMutableDictionary* res = [NSMutableDictionary dictionary];
-          
-          float xPos = (x + sigmoid(output[offset + 0])) * block_size;
-          float yPos = (y + sigmoid(output[offset + 1])) * block_size;
-          
-          float anchor_w = [[anchors objectAtIndex:(2 * b + 0)] floatValue];
-          float anchor_h = [[anchors objectAtIndex:(2 * b + 1)] floatValue];
-          float w = (float) (exp(output[offset + 2]) * anchor_w) * block_size;
-          float h = (float) (exp(output[offset + 3]) * anchor_h) * block_size;
-          
-          float x = fmax(0, (xPos - w / 2) / input_size);
-          float y = fmax(0, (yPos - h / 2) / input_size);
-          [rect setObject:@(x) forKey:@"x"];
-          [rect setObject:@(y) forKey:@"y"];
-          [rect setObject:@(fmin(1 - x, w / input_size)) forKey:@"w"];
-          [rect setObject:@(fmin(1 - y, h / input_size)) forKey:@"h"];
-          
-          [res setObject:rect forKey:@"rect"];
-          [res setObject:@(confidence_in_class) forKey:@"confidenceInClass"];
-          NSString* class_name = [NSString stringWithUTF8String:labels[detected_class].c_str()];
-          [res setObject:class_name forKey:@"detectedClass"];
-          
-          top_result_pq.push(std::pair<float, NSMutableDictionary*>(confidence_in_class, res));
-        }
-      }
-    }
-  }
-  
-  NSMutableDictionary* counters = [NSMutableDictionary dictionary];
-  while (!top_result_pq.empty()) {
-    NSMutableDictionary* result = top_result_pq.top().second;
-    top_result_pq.pop();
-    
-    NSString* detected_class = [result objectForKey:@"detectedClass"];
-    NSObject* counter = [counters objectForKey:detected_class];
-    if (counter) {
-      int countValue = [(NSNumber*)counter intValue] + 1;
-      if (countValue > num_results_per_class) {
-        continue;
-      }
-      [counters setObject:@(countValue) forKey:detected_class];
-    } else {
-      [counters setObject:@(1) forKey:detected_class];
-    }
-    [results addObject:result];
-  }
-  
-  return results;
-}
-
 NSMutableArray* detectObjectOnImage(NSDictionary* args) {
   const NSString* image_path = args[@"path"];
   const NSString* model = args[@"model"];
@@ -505,100 +287,19 @@ NSMutableArray* detectObjectOnImage(NSDictionary* args) {
   const float input_mean = [args[@"imageMean"] floatValue];
   const float input_std = [args[@"imageStd"] floatValue];
   const int num_results_per_class = [args[@"numResultsPerClass"] intValue];
-  
-  const NSArray* anchors = args[@"anchors"];
-  const int num_boxes_per_block = [args[@"numBoxesPerBlock"] intValue];
-  const int block_size = [args[@"blockSize"] floatValue];
-  
+
   NSMutableArray* empty = [@[] mutableCopy];
-  
   if (!interpreter) {
     NSLog(@"Failed to construct interpreter.");
     return empty;
   }
-  
   int input_size;
   feedInputTensorImage(image_path, input_mean, input_std, &input_size);
-  
   if (interpreter->Invoke() != kTfLiteOk) {
     NSLog(@"Failed to invoke!");
     return empty;
   }
-  
-  if ([model isEqual: @"SSDMobileNet"])
-    return parseSSDMobileNet(threshold, num_results_per_class);
-  else
-    return parseYOLO((int)(labels.size() - 1), anchors, block_size, num_boxes_per_block, num_results_per_class,
-                     threshold, input_size);
-}
-
-NSMutableArray* detectObjectOnBinary(NSDictionary* args) {
-  const FlutterStandardTypedData* typedData = args[@"binary"];
-  const NSString* model = args[@"model"];
-  const float threshold = [args[@"threshold"] floatValue];
-  const int num_results_per_class = [args[@"numResultsPerClass"] intValue];
-  
-  const NSArray* anchors = args[@"anchors"];
-  const int num_boxes_per_block = [args[@"numBoxesPerBlock"] intValue];
-  const int block_size = [args[@"blockSize"] floatValue];
-  
-  NSMutableArray* empty = [@[] mutableCopy];
-  
-  if (!interpreter) {
-    NSLog(@"Failed to construct interpreter.");
-    return empty;
-  }
-  
-  int input_size;
-  feedInputTensorBinary(typedData, &input_size);
-  
-  if (interpreter->Invoke() != kTfLiteOk) {
-    NSLog(@"Failed to invoke!");
-    return empty;
-  }
-  
-  if ([model isEqual: @"SSDMobileNet"])
-    return parseSSDMobileNet(threshold, num_results_per_class);
-  else
-    return parseYOLO((int)(labels.size() - 1), anchors, block_size, num_boxes_per_block, num_results_per_class,
-                     threshold, input_size);
-}
-
-NSMutableArray* detectObjectOnFrame(NSDictionary* args) {
-  const FlutterStandardTypedData* typedData = args[@"bytesList"][0];
-  const NSString* model = args[@"model"];
-  const int image_height = [args[@"imageHeight"] intValue];
-  const int image_width = [args[@"imageWidth"] intValue];
-  const float input_mean = [args[@"imageMean"] floatValue];
-  const float input_std = [args[@"imageStd"] floatValue];
-  const float threshold = [args[@"threshold"] floatValue];
-  const int num_results_per_class = [args[@"numResultsPerClass"] intValue];
-  
-  const NSArray* anchors = args[@"anchors"];
-  const int num_boxes_per_block = [args[@"numBoxesPerBlock"] intValue];
-  const int block_size = [args[@"blockSize"] floatValue];
-  
-  NSMutableArray* empty = [@[] mutableCopy];
-  
-  if (!interpreter) {
-    NSLog(@"Failed to construct interpreter.");
-    return empty;
-  }
-  
-  int input_size;
-  int image_channels = 4;
-  feedInputTensorFrame(typedData, &input_size, image_height, image_width, image_channels, input_mean, input_std);
-  
-  if (interpreter->Invoke() != kTfLiteOk) {
-    NSLog(@"Failed to invoke!");
-    return empty;
-  }
-  
-  if ([model isEqual: @"SSDMobileNet"])
-    return parseSSDMobileNet(threshold, num_results_per_class);
-  else
-    return parseYOLO((int)(labels.size() - 1), anchors, block_size, num_boxes_per_block, num_results_per_class,
-                     threshold, input_size);
+  return parseSSDMobileNet(threshold, num_results_per_class);
 }
 
 void close() {

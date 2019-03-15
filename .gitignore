@@ -6,3 +6,6 @@
 pubspec.lock
 
 build/
+
+.vscode/
+exsample/assets
